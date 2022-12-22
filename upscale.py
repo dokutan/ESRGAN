@@ -21,6 +21,9 @@ from utils.architecture.RRDB import RRDBNet as ESRGAN
 from utils.architecture.SPSR import SPSRNet as SPSR
 from utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 
+import zipfile
+import tarfile
+import tempfile
 
 class SeamlessOptions(str, Enum):
     TILE = "tile"
@@ -461,8 +464,9 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    model: str = typer.Argument(...),
-    input: Path = typer.Option(Path("input"), "--input", "-i", help="Input folder"),
+    model_color: Path = typer.Option(..., "--model-color", help="Model path for color images"),
+    model_bw: Path = typer.Option(..., "--model-bw", help="Model path for grayscale images"),
+    input: Path = typer.Option(Path("input"), "--input", "-i", help="Input folder or archive file"),
     output: Path = typer.Option(Path("output"), "--output", "-o", help="Output folder"),
     reverse: bool = typer.Option(False, "--reverse", "-r", help="Reverse Order"),
     skip_existing: bool = typer.Option(
@@ -545,9 +549,25 @@ def main(
         handlers=[RichHandler(markup=True)],
         # handlers=[RichHandler(markup=True, rich_tracebacks=True)],
     )
+    log = logging.getLogger()
+
+    # extract input if it is an archive
+    if zipfile.is_zipfile(input):
+        tmpdir = tempfile.mkdtemp()
+        log.info(f'input is a zip file, extracting to {tmpdir}')
+        with zipfile.ZipFile(input, 'r') as input_file:
+            input_file.extractall(tmpdir)
+        input = Path(tmpdir)
+
+    elif tarfile.is_tarfile(input):
+        tmpdir = tempfile.mkdtemp()
+        log.info(f'input is a tar file, extracting to {tmpdir}')
+        with tarfile.TarFile(input, 'r') as input_file:
+            input_file.extractall(tmpdir)
+        input = Path(tmpdir)
 
     upscale = Upscale(
-        model=model,
+        model=str(model_bw),
         input=input,
         output=output,
         reverse=reverse,
@@ -563,6 +583,7 @@ def main(
         alpha_threshold=alpha_threshold,
         alpha_boundary_offset=alpha_boundary_offset,
         alpha_mode=alpha_mode,
+        log=log
     )
     upscale.run()
 
