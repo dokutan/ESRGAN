@@ -24,6 +24,8 @@ from utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 import zipfile
 import tarfile
 import tempfile
+import atexit
+import shutil
 
 class SeamlessOptions(str, Enum):
     TILE = "tile"
@@ -89,6 +91,7 @@ class Upscale:
         alpha_boundary_offset: float = 0.2,
         alpha_mode: Optional[AlphaOptions] = None,
         log: logging.Logger = logging.getLogger(),
+        color: bool = True,
     ) -> None:
         self.model_str = model
         self.input = input.resolve()
@@ -107,6 +110,7 @@ class Upscale:
         self.alpha_boundary_offset = alpha_boundary_offset
         self.alpha_mode = alpha_mode
         self.log = log
+        self.color = color
         if self.fp16:
             torch.set_default_tensor_type(
                 torch.HalfTensor if self.cpu else torch.cuda.HalfTensor
@@ -151,10 +155,11 @@ class Upscale:
             self.output.mkdir(parents=True)
 
         print(
-            'Model{:s}: "{:s}"'.format(
+            'Model{:s}: "{:s}", processing {:s} images'.format(
                 "s" if len(model_chain) > 1 else "",
                 # ", ".join([Path(x).stem for x in model_chain]),
                 ", ".join([x for x in model_chain]),
+                "color" if self.color else "grayscale"
             )
         )
 
@@ -179,20 +184,36 @@ class Upscale:
                 output_dir = self.output.joinpath(img_input_path_rel).parent
                 img_output_path_rel = output_dir.joinpath(f"{img_path.stem}.png")
                 output_dir.mkdir(parents=True, exist_ok=True)
+
                 if len(model_chain) == 1:
                     self.log.info(
                         f'Processing {str(idx).zfill(len(str(len(images))))}: "{img_input_path_rel}"'
                     )
+
+                # skip image if it already exists?
                 if self.skip_existing and img_output_path_rel.is_file():
                     self.log.warning("Already exists, skipping")
                     if self.delete_input:
                         img_path.unlink(missing_ok=True)
                     progress.advance(task_upscaling)
                     continue
+
                 # read image
                 img = cv2.imread(str(img_path.absolute()), cv2.IMREAD_UNCHANGED)
                 if len(img.shape) < 3:
                     img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+                # skip image if it is (not) grayscale?
+                img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                h,s,v = cv2.split(img_hsv)
+                if self.color and s.flatten().max() < 1:
+                    self.log.info(f'"{img_input_path_rel}" is grayscale, skipping')
+                    progress.advance(task_upscaling)
+                    continue
+                elif not self.color and s.flatten().max() >= 1:
+                    self.log.info(f'"{img_input_path_rel}" is colored, skipping')
+                    progress.advance(task_upscaling)
+                    continue
 
                 # Seamless modes
                 if self.seamless == SeamlessOptions.TILE:
@@ -551,41 +572,50 @@ def main(
     )
     log = logging.getLogger()
 
+    # create temporary directory
+    tmp_input = tempfile.mkdtemp()
+    atexit.register(lambda: shutil.rmtree(tmp_input))
+
     # extract input if it is an archive
-    if zipfile.is_zipfile(input):
-        tmpdir = tempfile.mkdtemp()
-        log.info(f'input is a zip file, extracting to {tmpdir}')
+    if input.is_dir():
+        pass
+    elif zipfile.is_zipfile(input):
+        log.info(f'input is a zip file, extracting to {tmp_input}')
         with zipfile.ZipFile(input, 'r') as input_file:
-            input_file.extractall(tmpdir)
-        input = Path(tmpdir)
-
+            input_file.extractall(tmp_input)
+        input = Path(tmp_input)
     elif tarfile.is_tarfile(input):
-        tmpdir = tempfile.mkdtemp()
-        log.info(f'input is a tar file, extracting to {tmpdir}')
+        log.info(f'input is a tar file, extracting to {tmp_input}')
         with tarfile.TarFile(input, 'r') as input_file:
-            input_file.extractall(tmpdir)
-        input = Path(tmpdir)
+            input_file.extractall(tmp_input)
+        input = Path(tmp_input)
 
-    upscale = Upscale(
-        model=str(model_bw),
-        input=input,
-        output=output,
-        reverse=reverse,
-        skip_existing=skip_existing,
-        delete_input=delete_input,
-        seamless=seamless,
-        cpu=cpu,
-        fp16=fp16,
-        device_id=device_id,
-        cache_max_split_depth=cache_max_split_depth,
-        binary_alpha=binary_alpha,
-        ternary_alpha=ternary_alpha,
-        alpha_threshold=alpha_threshold,
-        alpha_boundary_offset=alpha_boundary_offset,
-        alpha_mode=alpha_mode,
-        log=log
-    )
-    upscale.run()
+    if not input.is_dir():
+        log.error("Input has to be a directory or zip/tar file")
+        exit(1)
+
+    for color, model in [(True, model_color), (False, model_bw)]:
+        upscale = Upscale(
+            model=str(model),
+            input=input,
+            output=output,
+            reverse=reverse,
+            skip_existing=skip_existing,
+            delete_input=delete_input,
+            seamless=seamless,
+            cpu=cpu,
+            fp16=fp16,
+            device_id=device_id,
+            cache_max_split_depth=cache_max_split_depth,
+            binary_alpha=binary_alpha,
+            ternary_alpha=ternary_alpha,
+            alpha_threshold=alpha_threshold,
+            alpha_boundary_offset=alpha_boundary_offset,
+            alpha_mode=alpha_mode,
+            log=log,
+            color=color
+        )
+        upscale.run()
 
 
 if __name__ == "__main__":
