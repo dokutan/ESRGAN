@@ -597,6 +597,10 @@ def main(
     # create temporary directory
     tmp_input = tempfile.mkdtemp()
     atexit.register(lambda: shutil.rmtree(tmp_input))
+    tmp_output = Path(tempfile.mkdtemp())
+    atexit.register(lambda: shutil.rmtree(tmp_output))
+    tmp_archive = Path(tempfile.mkdtemp())
+    atexit.register(lambda: shutil.rmtree(tmp_archive))
 
     # extract input if it is an archive
     if input.is_dir():
@@ -620,7 +624,7 @@ def main(
         upscale = Upscale(
             model=str(model),
             input=input,
-            output=output,
+            output=tmp_output,
             reverse=reverse,
             skip_existing=skip_existing,
             delete_input=delete_input,
@@ -642,10 +646,21 @@ def main(
     # optimize output using zopflipng
     if zopfli:
         images: List[Path] = []
-        images.extend(output.glob(f"**/*.png"))
+        images.extend(tmp_output.glob(f"**/*.png"))
 
         print("Optimizing output")
         process_map(optimize_png, images)
+
+    # make archive from output files or copy to output directory
+    archive_path = tmp_archive.joinpath("out")
+    if str(output).endswith(".zip") or str(output).endswith(".cbz"):
+        shutil.make_archive(archive_path, "zip", tmp_output)
+        shutil.copyfile(str(archive_path) + ".zip", output)
+    elif str(output).endswith(".tar") or str(output).endswith(".cbt"):
+        shutil.make_archive(archive_path, "tar", tmp_output)
+        shutil.copyfile(str(archive_path) + ".tar", output)
+    else:
+        shutil.copytree(tmp_output, output, dirs_exist_ok=True)
 
 
 if __name__ == "__main__":
