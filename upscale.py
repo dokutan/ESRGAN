@@ -27,6 +27,10 @@ import tempfile
 import atexit
 import shutil
 
+from zopflipng import png_optimize
+from tqdm.contrib.concurrent import process_map
+
+
 class SeamlessOptions(str, Enum):
     TILE = "tile"
     MIRROR = "mirror"
@@ -480,6 +484,18 @@ class Upscale:
         return img
 
 
+def optimize_png(img_path: Path) -> int:
+    in_file = open(img_path, "rb")
+    png_data = in_file.read()
+    in_file.close()
+    result, code = png_optimize(png_data)
+
+    if code == 0:
+        with open(img_path, "wb") as out_file:
+            out_file.write(result)
+    return code
+
+
 app = typer.Typer()
 
 
@@ -561,6 +577,12 @@ def main(
         "-v",
         help="Verbose mode",
     ),
+    zopfli: bool = typer.Option(
+        False,
+        "--zopfli",
+        "-z",
+        help="Optimize output images using zopflipng",
+    ),
 ):
 
     logging.basicConfig(
@@ -616,6 +638,14 @@ def main(
             color=color
         )
         upscale.run()
+
+    # optimize output using zopflipng
+    if zopfli:
+        images: List[Path] = []
+        images.extend(output.glob(f"**/*.png"))
+
+        print("Optimizing output")
+        process_map(optimize_png, images)
 
 
 if __name__ == "__main__":
