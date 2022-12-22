@@ -50,8 +50,6 @@ class Upscale:
     input: Path = None
     output: Path = None
     reverse: bool = None
-    skip_existing: bool = None
-    delete_input: bool = None
     seamless: SeamlessOptions = None
     cpu: bool = None
     fp16: bool = None
@@ -82,8 +80,6 @@ class Upscale:
         input: Path,
         output: Path,
         reverse: bool = False,
-        skip_existing: bool = False,
-        delete_input: bool = False,
         seamless: Optional[SeamlessOptions] = None,
         cpu: bool = False,
         fp16: bool = False,
@@ -101,8 +97,6 @@ class Upscale:
         self.input = input.resolve()
         self.output = output.resolve()
         self.reverse = reverse
-        self.skip_existing = skip_existing
-        self.delete_input = delete_input
         self.seamless = seamless
         self.cpu = cpu
         self.fp16 = fp16
@@ -194,14 +188,6 @@ class Upscale:
                         f'Processing {str(idx).zfill(len(str(len(images))))}: "{img_input_path_rel}"'
                     )
 
-                # skip image if it already exists?
-                if self.skip_existing and img_output_path_rel.is_file():
-                    self.log.warning("Already exists, skipping")
-                    if self.delete_input:
-                        img_path.unlink(missing_ok=True)
-                    progress.advance(task_upscaling)
-                    continue
-
                 # read image
                 img = cv2.imread(str(img_path.absolute()), cv2.IMREAD_UNCHANGED)
                 if len(img.shape) < 3:
@@ -271,9 +257,6 @@ class Upscale:
                     rlt = self.crop_seamless(rlt, final_scale)
 
                 cv2.imwrite(str(img_output_path_rel.absolute()), rlt)
-
-                if self.delete_input:
-                    img_path.unlink(missing_ok=True)
 
                 progress.advance(task_upscaling)
 
@@ -506,18 +489,6 @@ def main(
     input: Path = typer.Option(Path("input"), "--input", "-i", help="Input folder or archive file"),
     output: Path = typer.Option(Path("output"), "--output", "-o", help="Output folder"),
     reverse: bool = typer.Option(False, "--reverse", "-r", help="Reverse Order"),
-    skip_existing: bool = typer.Option(
-        False,
-        "--skip-existing",
-        "-se",
-        help="Skip existing output files",
-    ),
-    delete_input: bool = typer.Option(
-        False,
-        "--delete-input",
-        "-di",
-        help="Delete input files after upscaling",
-    ),
     seamless: SeamlessOptions = typer.Option(
         None,
         "--seamless",
@@ -626,8 +597,6 @@ def main(
             input=input,
             output=tmp_output,
             reverse=reverse,
-            skip_existing=skip_existing,
-            delete_input=delete_input,
             seamless=seamless,
             cpu=cpu,
             fp16=fp16,
